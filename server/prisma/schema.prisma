@@ -18,17 +18,32 @@ enum ROLE {
 }
 
 model User {
-  id        String  @id @default(uuid())
-  username  String? @unique
+  id        String    @id @default(uuid())
+  username  String?   @unique
   firstName String
   lastName  String
-  email     String  @unique
+  email     String    @unique
   password  String
   address   String?
-  role      ROLE    @default(CUSTOMER)
+  role      ROLE      @default(CUSTOMER)
+  session   Session[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("users")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  refreshToken String
+  expiresAt    DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
