@@ -1,15 +1,17 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, Req } from '@nestjs/common';
 import { LoginDto } from './dto/login.dto.js';
 import { LoginService } from './use-cases/login/login.service.js';
 import { Throttle } from '@nestjs/throttler';
 import { RegisterDto } from './dto/create-user.dto.js';
 import { RegisterService } from './use-cases/register/register.service.js';
+import { RefreshService } from './use-cases/refresh-token/refresh.service.js';
 
 @Controller('auth')
 export class AuthController {
     constructor(
         private readonly loginService: LoginService,
-        private readonly registerService: RegisterService
+        private readonly registerService: RegisterService,
+        private readonly verifyToken: RefreshService
     ) { }
 
     // ========================= Login =========================
@@ -31,4 +33,15 @@ export class AuthController {
         return this.registerService.execute(dto)
     }
     // ========================= Register =========================
+
+    // ========================= Verify =========================
+    @Throttle({
+        short: { limit: 3, ttl: 60000 }
+    })
+    @Post('verify')
+    async verify(@Req() req: any) {
+        console.log(req)
+        return this.verifyToken.verify(req.body.sessionId, req.body.token)
+    }
+    // ========================= Verify =========================
 }
