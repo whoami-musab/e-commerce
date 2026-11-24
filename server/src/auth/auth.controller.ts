@@ -7,6 +7,7 @@ import { RegisterService } from './use-cases/register/register.service.js';
 import { RefreshUseCase } from './use-cases/refresh-token/refresh.use-case.js';
 import type { Response, Request } from 'express'
 import { LogoutUseCase } from './use-cases/logout/logout.use-case.js';
+import { setRefreshCookie } from '../utils/cookie.utils.js';
 
 
 
@@ -28,13 +29,7 @@ export class AuthController {
     async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
         const result = await this.loginService.execute(dto)
 
-        res.cookie('refreshToken', result.refreshToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
-            path: '/'
-        });
+        setRefreshCookie(res, result.accessToken)
 
         return {
             success: true,
@@ -97,13 +92,7 @@ export class AuthController {
 
         const result = await this.refreshUseCase.execute(token);
 
-        res.cookie('refreshToken', result.refreshToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
-            path: '/'
-        });
+        setRefreshCookie(res, result.accessToken)
 
         return {
             accessToken: result.accessToken
