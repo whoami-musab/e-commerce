@@ -16,6 +16,7 @@ export class LoginService {
     ) { }
 
     async execute(dto: LoginDto) {
+        // Check empty fields
         if (!dto.username || !dto.password) {
             throw new BadRequestException('All fields are required!')
         }
