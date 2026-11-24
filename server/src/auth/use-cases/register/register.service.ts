@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, InternalServerErrorException } from "@nestjs/common";
 import { PrismaService } from "../../../prisma/prisma.service.js";
 import { RegisterDto } from "../../dto/create-user.dto.js";
-import bcrypt from "bcryptjs";
+import * as argon2 from 'argon2'
 import { Prisma } from "../../../generated/prisma/client.js";
 
 
@@ -15,6 +15,7 @@ export class RegisterService {
             throw new BadRequestException('All fields are required!')
         }
 
+
         const exists = await this.prisma.user.findFirst({
             where: {
                 OR: [
@@ -24,6 +25,7 @@ export class RegisterService {
             },
             select: { id: true }
         });
+
         // Check if user already exists
         if (exists) {
             throw new BadRequestException('User already registered!')
@@ -31,7 +33,12 @@ export class RegisterService {
 
 
         // Hash the password
-        const hashedPass = await bcrypt.hash(dto.password, 12)
+        const hashedPass = await argon2.hash(dto.password, {
+            type: argon2.argon2id,
+            memoryCost: 19456,
+            timeCost: 2,
+            parallelism: 1,
+        })
 
         try {
 

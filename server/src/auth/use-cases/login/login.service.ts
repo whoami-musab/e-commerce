@@ -1,18 +1,18 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, PreconditionFailedException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service.js';
 import { LoginDto } from '../../dto/login.dto.js';
 import { JwtService } from '@nestjs/jwt';
-import bcrypt from 'bcryptjs';
+import * as argon2 from 'argon2'
 import { ConfigService } from '@nestjs/config';
 import { RefreshService } from '../refresh-token/refresh.service.js';
 
 @Injectable()
 export class LoginService {
     constructor(
-        private readonly prisma: PrismaService,
+        private readonly refreshService: RefreshService,
         private readonly jwtService: JwtService,
         private readonly configService: ConfigService,
-        private readonly refreshService: RefreshService
+        private readonly prisma: PrismaService,
     ) { }
 
     async execute(dto: LoginDto) {
@@ -20,6 +20,7 @@ export class LoginService {
         if (!dto.username || !dto.password) {
             throw new BadRequestException('All fields are required!')
         }
+
         const user = await this.prisma.user.findFirst({
             where: {
                 OR: [
@@ -39,12 +40,13 @@ export class LoginService {
         })
 
         if (!user) {
-            throw new NotFoundException('Invalid Credentials!')
+            throw new UnauthorizedException('Invalid Credentials!')
         }
 
-        const comparePass = await bcrypt.compare(dto.password, user.password)
+
+        const comparePass = await argon2.verify(user.password, dto.password)
         if (!comparePass) {
-            throw new BadRequestException('Invalid Credentials!')
+            throw new UnauthorizedException('Invalid Credentials!')
         }
 
         // Generate access token
@@ -63,12 +65,14 @@ export class LoginService {
         // Generate refresh token
         const refreshToken = await this.refreshService.generate(user.id)
 
+        const returnData = performance.now()
         return {
             success: true,
             message: 'Login successfull!',
             accessToken,
             refreshToken: refreshToken.token,
-            sessionId: refreshToken.sessionId
+            sessionId: refreshToken.sessionId,
+            returnTime: (performance.now() - returnData).toFixed(2)
         }
     }
 }

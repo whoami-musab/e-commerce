@@ -1,17 +1,23 @@
-import { Body, Controller, Post, Req } from '@nestjs/common';
+import { Body, Controller, Post, Req, Res, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { LoginDto } from './dto/login.dto.js';
 import { LoginService } from './use-cases/login/login.service.js';
 import { Throttle } from '@nestjs/throttler';
 import { RegisterDto } from './dto/create-user.dto.js';
 import { RegisterService } from './use-cases/register/register.service.js';
-import { RefreshService } from './use-cases/refresh-token/refresh.service.js';
+import { RefreshUseCase } from './use-cases/refresh-token/refresh.use-case.js';
+import type { Response, Request } from 'express'
+import { LogoutUseCase } from './use-cases/logout/logout.use-case.js';
+
+
+
 
 @Controller('auth')
 export class AuthController {
     constructor(
         private readonly loginService: LoginService,
         private readonly registerService: RegisterService,
-        private readonly verifyToken: RefreshService
+        private readonly refreshUseCase: RefreshUseCase,
+        private readonly logoutService: LogoutUseCase
     ) { }
 
     // ========================= Login =========================
@@ -19,8 +25,21 @@ export class AuthController {
         short: { limit: 5, ttl: 60000 }
     })
     @Post('login')
-    async login(@Body() dto: LoginDto) {
-        return this.loginService.execute(dto)
+    async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
+        const result = await this.loginService.execute(dto)
+
+        res.cookie('refreshToken', result.refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+            path: '/'
+        });
+
+        return {
+            success: true,
+            accessToken: result.accessToken
+        }
     }
     // ========================= Login =========================
 
@@ -34,14 +53,63 @@ export class AuthController {
     }
     // ========================= Register =========================
 
-    // ========================= Verify =========================
+    // ========================= Logout =========================
+
     @Throttle({
         short: { limit: 3, ttl: 60000 }
     })
-    @Post('verify')
-    async verify(@Req() req: any) {
-        console.log(req)
-        return this.verifyToken.verify(req.body.sessionId, req.body.token)
+    @Post('logout')
+    async logout(@Req() req: Request, @Res() res: Response) {
+        const token = req.cookies?.refreshToken
+        const result = await this.logoutService.execute(token)
+
+        res.clearCookie("refreshToken",
+            {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'lax',
+                path: '/'
+            })
+
+        return {
+            success: true,
+            result
+        }
     }
-    // ========================= Verify =========================
+
+
+    // ========================= Logout =========================
+
+
+
+    // ========================= Session =========================
+    @Throttle({
+        short: { limit: 10, ttl: 60000 }
+    })
+    @Post('refresh')
+    async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+        const token = req.cookies?.refreshToken
+
+        // Check empty fields
+        if (!token) {
+            throw new UnauthorizedException('Refresh token is required');
+        }
+
+        const result = await this.refreshUseCase.execute(token);
+
+        res.cookie('refreshToken', result.refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+            path: '/'
+        });
+
+        return {
+            accessToken: result.accessToken
+        }
+    }
+    // ========================= Session =========================
+
+
 }

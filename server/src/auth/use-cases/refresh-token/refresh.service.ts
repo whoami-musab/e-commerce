@@ -1,15 +1,18 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../../../prisma/prisma.service.js";
 import { ConfigService } from "@nestjs/config";
-import bcrypt from "bcryptjs";
+import { HmacService } from "../../../hmac/hmac.service.js";
+import { RedisService } from "../../../redis/redis.service.js";
 
 @Injectable()
 export class RefreshService {
     constructor(
         private readonly jwtService: JwtService,
         private readonly prisma: PrismaService,
-        private readonly config: ConfigService
+        private readonly config: ConfigService,
+        private readonly hmac: HmacService,
+        private readonly redis: RedisService
     ) { }
 
     // Generate refresh token
@@ -19,22 +22,14 @@ export class RefreshService {
             throw new UnauthorizedException('Credentials required!')
         }
 
-        // Create session
-        const session = await this.prisma.session.create({
-            data: {
-                userId,
-                refreshToken: '',
-                expiresAt: new Date(
-                    Date.now() + 7 * 24 * 60 * 60 * 1000
-                )
-            }
-        });
+        // Gen RandomUUID for sessionId
+        const sessionId = crypto.randomUUID()
 
-        // Generate refresh token
+        // Gen token
         const token = await this.jwtService.signAsync(
             {
                 sub: userId,
-                sid: session.id
+                sid: sessionId,
             },
             {
                 secret: this.config.getOrThrow<string>('REFRESH_SECRET'),
@@ -42,20 +37,27 @@ export class RefreshService {
             }
         )
 
-        // Hash the token to store it in the database
-        const hash = await bcrypt.hash(token, 12)
+        // Hash token
+        const hash = this.hmac.hashToken(token)
 
-        // Save hash
-        await this.prisma.session.update({
-            where: { id: session.id },
-            data: { refreshToken: hash }
-        })
+        // Gen session
+        const session = {
+            userId,
+            refreshToken: hash,
+            createdAt: new Date().toISOString()
+        }
 
-        // return {token, sessionId}
+        // Store to redis
+        await this.redis.client.set(
+            `session:${sessionId}`,
+            JSON.stringify(session),
+            'EX',
+            7 * 24 * 60 * 60
+        );
 
         return {
             token,
-            sessionId: session.id
+            sessionId
         }
 
     }
@@ -67,36 +69,39 @@ export class RefreshService {
             throw new UnauthorizedException('Credentials required!')
         }
         // Get specific session
-        const session = await this.prisma.session.findUnique({
-            where: { id: sessionId },
-        })
+        const data = await this.redis.client.get(
+            `session:${sessionId}`
+        )
 
         // Check invalid session or expires
-        if (!session || session.expiresAt <= new Date()) {
+        if (!data) {
             throw new UnauthorizedException('Invalid session!')
         }
 
+        const session = JSON.parse(data)
+
         // Check valid session
-        const valid = await bcrypt.compare(token, session.refreshToken)
+        const valid = this.hmac.compareToken(token, session.refreshToken)
 
         if (!valid) {
             throw new UnauthorizedException('Invalid token!')
         }
 
         // Return the session
-        return session
+        return {
+            id: sessionId,
+            ...session
+        }
     }
 
     // Create rotate
     async rotate(sessionId: string, userId: string, oldHash: string) {
         // Check empty fields
-        if (!sessionId || !userId) {
+        if (!sessionId || !userId || !oldHash) {
             throw new UnauthorizedException('Credentials required!')
         }
 
-        const expiresAt = new Date(
-            Date.now() + 7 * 24 * 60 * 60 * 1000
-        );
+        const expiresIn = 7 * 24 * 60 * 60;
 
         // Generate new token
         const newToken = await this.jwtService.signAsync(
@@ -110,29 +115,92 @@ export class RefreshService {
             },
         );
 
-        const hash = await bcrypt.hash(newToken, 12);
+        const newHash = this.hmac.hashToken(newToken)
 
         // Automatic replacement old token can only used once
-        const result = await this.prisma.session.updateMany({
-            where: {
-                id: sessionId,
-                userId,
-                refreshToken: oldHash,
-                expiresAt: {
-                    gt: new Date()
-                }
-            },
-            data: {
-                refreshToken: hash,
-                expiresAt
-            }
-        });
+        const script = `
+            local data = redis.call('GET', KEYS[1])
 
-        if (result.count !== 1) {
-            throw new UnauthorizedException('Refersh token already used!')
+            if not data then
+                return 0
+            end
+
+            local session = cjson.decode(data)
+
+            if session.userId ~= ARGV[1] then
+                return 0
+            end
+
+            session.refreshToken ~= ARGV[2] then
+                return 0
+            end
+
+            session.refreshToken ~= ARGV[3]
+
+            redis.call(
+                'SET',
+                KEYS[1],
+                cjson.encode(session),
+                'EX',
+                ARGV[4]
+            )
+            
+            return 1
+        `;
+
+        const result = await this.redis.client.eval(
+            script,
+            1,
+            `session:${sessionId}`,
+            userId,
+            oldHash,
+            newHash,
+            expiresIn.toString()
+        );
+
+        if (result !== 1) {
+            throw new UnauthorizedException('Refersh token already used or invalid session!')
         }
 
         return newToken
+    }
+
+    async revoke(sessionId: string, userId: string) {
+        // Check empty fields
+        if (!sessionId || !userId) {
+            throw new BadRequestException('Credentials required!')
+        }
+
+        const key = `session:${sessionId}`
+
+        // Get session
+        const data = await this.redis.client.get(key)
+
+        if (!data) {
+            throw new UnauthorizedException('Invalid session!')
+        }
+
+        let session;
+
+        try {
+            session = JSON.parse(data)
+        } catch (error) {
+            throw new UnauthorizedException('Invalid session!')
+        }
+
+
+
+        if (session.userId !== userId) {
+            throw new UnauthorizedException('Invalid session!')
+        }
+
+        await this.redis.client.del(key)
+
+
+        return {
+            success: true
+        }
+
     }
 
 }

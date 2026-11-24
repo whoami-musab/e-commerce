@@ -5,6 +5,8 @@ import { ValidationPipe, VersioningType } from '@nestjs/common';
 import helmet from 'helmet';
 import 'dotenv/config';
 import type { CorsOptions } from 'cors';
+import cookieParser from 'cookie-parser'
+import { Request, Response } from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -42,6 +44,8 @@ async function bootstrap() {
 
   // Security
   expApp.disable('x-powered-by');
+
+  app.use(cookieParser());
 
   app.use(
     helmet({

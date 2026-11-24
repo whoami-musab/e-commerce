@@ -9,6 +9,8 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { AuthController } from './auth/auth.controller.js';
 import { AuthModule } from './auth/auth.module.js';
+import { RedisModule } from './redis/redis.module.js';
+import { LogoutUseCase } from './auth/use-cases/logout/logout.use-case.js';
 
 @Module({
   imports: [
@@ -35,6 +37,7 @@ import { AuthModule } from './auth/auth.module.js';
     JwtModule,
     PrismaModule,
     AuthModule,
+    RedisModule
   ],
   controllers: [AppController, AuthController],
   providers: [AppService, PrismaService,
