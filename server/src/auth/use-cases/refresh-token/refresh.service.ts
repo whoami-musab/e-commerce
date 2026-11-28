@@ -131,8 +131,9 @@ export class RefreshService {
                 return 0
             end
 
-            session.refreshToken ~= ARGV[2] then
-                return 0
+            if session.refreshToken ~= ARGV[2] then
+                redis.call('DEL', KEYS[1])
+                return -1
             end
 
             session.refreshToken ~= ARGV[3]
@@ -158,6 +159,9 @@ export class RefreshService {
             expiresIn.toString()
         );
 
+        if (result === -1) {
+            throw new UnauthorizedException('Refersh token reuse detected. Session revoked!')
+        }
         if (result !== 1) {
             throw new UnauthorizedException('Refersh token already used or invalid session!')
         }
